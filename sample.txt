@@ -1,0 +1,35 @@
+Question: How does IRCoT improve over traditional RAG approaches and what are its key components?
+Answer:
+IRCoT improves over traditional RAG (Retrieve-and-Read) approaches by operating through an iterative process that alternates between extending the Chain of Thought (CoT) and expanding retrieved information. This allows for a more dynamic and interactive process, where each retrieved piece of information influences the next thought step, and each reasoning step guides subsequent retrieval actions.
+
+The key components of the IRCoT process include:
+
+1. Query understanding and decomposition
+2. Initial document retrieval
+3. Iterative reasoning steps
+IRCoT (Interleaved Retrieval and Chain-of-Thought) improves over traditional RAG (Retrieve-and-Read) approaches in several ways. The key differences and components are as follows:
+
+**Improvements over Traditional RAG:**
+
+1. **Iterative process**: IRCoT operates through an iterative process that alternates between extending the Chain of Thought (CoT) and expanding retrieved information. This allows for a more dynamic and interactive process.
+2. **Dynamic interplay**: Each
+IRCoT (Interleaved Retrieval and Chain-of-Thought) improves over traditional RAG (Retrieve-and-Read) approaches in several ways. The key differences and components are as follows:
+
+**Improvements over Traditional RAG:**
+
+1. **Iterative process**: IRCoT operates through an iterative process that alternates between extending the Chain of Thought (CoT) and expanding retrieved information. This allows for a more dynamic and interactive process.
+2. **Dynamic interplay**: Each
+IRCoT (Interleaved Retrieval and Chain-of-Thought) improves over traditional RAG (Retrieve-and-Read) approaches in several ways. The key differences and components are as follows:
+
+**Improvements over Traditional RAG:**
+
+1. **Iterative process**: IRCoT operates through an iterative process that alternates between extending the Chain of Thought (CoT) and expanding retrieved information. This allows for a more dynamic and interactive process.
+2. **Dynamic interplay**: Each
+IRCoT (Interleaved Retrieval and Chain-of-Thought) improves over traditional RAG (Retrieve-and-Read) approaches in several ways. The key differences and components are as follows:
+
+**Improvements over Traditional RAG:**
+
+1. **Iterative process**: IRCoT operates through an iterative process that alternates between extending the Chain of Thought (CoT) and expanding retrieved information. This allows for a more dynamic and interactive process.
+2. **Dynamic interplay**: Each
+
+
