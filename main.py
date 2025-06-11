@@ -7,12 +7,19 @@ from sklearn.metrics.pairwise import cosine_similarity
 from utils import *
 
 from llm import OpenRouterLLM
+import json
+import pandas as pd
+from pymongo import MongoClient
+import string
+
+
+
 
 # embedding_model="sentence-transformers/all-mpnet-base-v2"
 
 class IRCoTSystem: 
-    def __init__(self, knowledge_base, prompt_template, my_llm, embedding_model="all-MiniLM-L6-v2"):
-        self.knowledge_base = knowledge_base
+    def __init__(self, collection, prompt_template, my_llm, embedding_model="all-MiniLM-L6-v2"):
+        self.collection = collection
         self.llm = my_llm 
         self.embedding_model = SentenceTransformer(embedding_model)
         
@@ -23,25 +30,112 @@ class IRCoTSystem:
         self.answer = []
         self.prompt_template = prompt_template
         
-    def retrieve_initial(self, question: str, k: int = 3) -> List[Dict]:
-        # Initial retrieval using the question
-        question_embedding = self.embedding_model.encode([question])[0]
-        doc_embeddings = np.array([doc["embedding"] for doc in self.knowledge_base])
+    # def retrieve_initial(self, question: str, k: int = 3) -> List[Dict]:
+    #     # Initial retrieval using the question
+    #     question_embedding = self.embedding_model.encode([question])[0]
+    #     doc_embeddings = np.array([doc["embedding"] for doc in self.knowledge_base])
         
-        similarities = cosine_similarity([question_embedding], doc_embeddings)[0]
-        top_indices = similarities.argsort()[-k:][::-1]
+    #     similarities = cosine_similarity([question_embedding], doc_embeddings)[0]
+    #     top_indices = similarities.argsort()[-k:][::-1]
         
-        return [self.knowledge_base[i] for i in top_indices]
+    #     return [self.knowledge_base[i] for i in top_indices]
+
+    def retrieve_initial(self, question:str, k: int = 10) -> List[Dict]:
+        q_vec = self.embedding_model.encode([question])[0]
+        q_norm = np.linalg.norm(q_vec)
+        
+        cursor = self.collection.find({}, {'title':1, 'chunk':1, 'embedding':1})
+        
+        best_per_title = {}  # title -> (score, chunk)
+        for doc in cursor:
+            title = doc['title']
+            chunk = doc['chunk']
+            emb = np.array(doc['embedding'], dtype=np.float32)
+            score = np.dot(q_vec, emb) / (q_norm * np.linalg.norm(emb))
+            
+            if title not in best_per_title or score > best_per_title[title][2]:
+                best_per_title[title] = (chunk, emb, score)
+        
+        results = [
+            (title, chunk, emb, score)
+            for title, (chunk, emb, score) in best_per_title.items()
+        ]
+        # results.sort(key=lambda x: x[0], reverse=True)
+
+        # top_k = sorted(
+        #     best_per_title.values(),
+        #     key=lambda x: x[2],   # sort by score
+        #     reverse=True
+        # )[:k]
+
+        results_sorted = sorted(results, key=lambda x: x[3], reverse=True)[:k]
+
+        # 5. Build output list of dicts
+        result_dict = [
+            {
+                "title": t,
+                "text": txt,
+                "embedding": emb,
+                "score": score
+            }
+            for t, txt, emb, score in results_sorted
+        ]
+
+        return result_dict
+        
     
+    # def retrieve_with_cot(self, cot_sentence: str, k: int = 1) -> List[Dict]:
+    #     # Retrieval using the latest CoT sentence
+    #     cot_embedding = self.embedding_model.encode([cot_sentence])[0]
+    #     doc_embeddings = np.array([doc["embedding"] for doc in self.knowledge_base])
+        
+    #     similarities = cosine_similarity([cot_embedding], doc_embeddings)[0]
+    #     top_indices = similarities.argsort()[-k:][::-1]
+        
+    #     return [self.knowledge_base[i] for i in top_indices]
+
     def retrieve_with_cot(self, cot_sentence: str, k: int = 1) -> List[Dict]:
-        # Retrieval using the latest CoT sentence
-        cot_embedding = self.embedding_model.encode([cot_sentence])[0]
-        doc_embeddings = np.array([doc["embedding"] for doc in self.knowledge_base])
+        q_vec = self.embedding_model.encode([cot_sentence])[0]
+        q_norm = np.linalg.norm(q_vec)
         
-        similarities = cosine_similarity([cot_embedding], doc_embeddings)[0]
-        top_indices = similarities.argsort()[-k:][::-1]
+        cursor = self.collection.find({}, {'title':1, 'chunk':1, 'embedding':1})
         
-        return [self.knowledge_base[i] for i in top_indices]
+        best_per_title = {}  # title -> (score, chunk)
+        for doc in cursor:
+            title = doc['title']
+            chunk = doc['chunk']
+            emb = np.array(doc['embedding'], dtype=np.float32)
+            score = np.dot(q_vec, emb) / (q_norm * np.linalg.norm(emb))
+            
+            if title not in best_per_title or score > best_per_title[title][2]:
+                best_per_title[title] = (chunk, emb, score)
+        
+        results = [
+            (title, chunk, emb, score)
+            for title, (chunk, emb, score) in best_per_title.items()
+        ]
+        # results.sort(key=lambda x: x[0], reverse=True)
+
+        # top_k = sorted(
+        #     best_per_title.values(),
+        #     key=lambda x: x[2],   # sort by score
+        #     reverse=True
+        # )[:k]
+
+        results_sorted = sorted(results, key=lambda x: x[3], reverse=True)[:k]
+
+        # 5. Build output list of dicts
+        result_dict = [
+            {
+                "title": t,
+                "text": txt,
+                "embedding": emb,
+                "score": score
+            }
+            for t, txt, emb, score in results_sorted
+        ]
+
+        return result_dict
     
     def generate_next_cot(self, question: str, paragraphs: List[Dict], cot_so_far: List[str]) -> str:
         # Construct prompt for generating the next CoT sentence
@@ -72,10 +166,20 @@ class IRCoTSystem:
 
         return prompt
     
-    def eval_evidence(self, output, target):
-        f1_score = cal_f1_score(output, target)
-        accuracy = cal_accuracy_score(output, target)
-        return f"F1 Score: {f1_score} \n Accuracy: {accuracy}"
+    def eval_evidence(self, output, target, num_iter):
+        # print("========================================")
+        # print(f"Output: {output}")
+        # print("========================================")
+        # print(f"Target: {target}")
+        # print("========================================")
+        if len(target) == 0:
+            f1_score = 1
+            accuracy = 1
+        else:
+            f1_score = cal_f1_score(output, target)
+            accuracy = cal_accuracy_score(output, target)
+        # return f"F1 Score: {f1_score} \n Accuracy: {accuracy} \n Number of Iteration: {num_iter}"
+        return (f1_score, accuracy, num_iter)
 
     def answer_question(self, question_set: dict, max_iterations: int = 10) -> str:
         # Initial retrieval
@@ -86,7 +190,7 @@ class IRCoTSystem:
 
         paragraphs = self.retrieve_initial(question)
         cot_sentences = []
-        num_iter = 1
+        num_iter = 0
 
 
         # Interleave reasoning and retrieval
@@ -114,13 +218,41 @@ class IRCoTSystem:
             #Check for duplications
             paragraphs = remove_duplicates(paragraphs)
         titles = extract_titles(paragraphs)
-        evidence_score = self.eval_evidence(titles, evidences)
+        evidence_score = self.eval_evidence(titles, evidences, num_iter)
 
         answer = "\n".join(cot_sentences)
 
         return answer, evidence_score
         # return self.answer
         # return "\n".join(cot_sentences)
+
+
+    def load_test_set(self, test_path):
+        with open(test_path, 'r', encoding='utf-8') as f:
+            raw_data = json.load(f)
+
+        test_set = []
+        for item in raw_data:
+            question = item['query']
+            answer = item['answer']
+            evidence_titles = [e['title'] for e in item.get('evidence_list', [])]
+            
+            test_set.append({
+                "question": question,
+                "answer": answer,
+                "evidence": evidence_titles
+            })
+
+        # df = pd.DataFrame({
+        #     "question": [d["question"] for d in test_set[:5]],
+        #     "answer": [d["answer"] for d in test_set[:5]],
+        #     "evidence": [", ".join(d["evidence"]) for d in test_set[:5]],
+        # })
+
+        # print(df.head(2))
+        # tools.display_dataframe_to_user(name="Loaded Test Set Preview", dataframe=df)
+
+        return test_set
 
 
 if __name__ == "__main__":
@@ -130,99 +262,19 @@ if __name__ == "__main__":
     # model_name="gpt-3.5-turbo"
     model_name="deepseek/deepseek-chat-v3-0324:free"
     my_llm = OpenRouterLLM(model_name)
-    
-    # It can be your pdf, website, wikipedia, or anything else.
-    knowledge_base = [
-        {
-            "title": "IRCoT Framework Overview",
-            "text": "The IRCoT framework represents a groundbreaking fusion of interleaved retrieval and chain-of-thought methodologies. This innovative approach creates a dynamic feedback loop between information gathering and reasoning processes. At its core, IRCoT begins with an initial query extraction phase. The system analyzes the user's question to identify key concepts and potential search terms. This preliminary analysis shapes the first retrieval iteration.",
-            "embedding": None  # Will be populated by the embedding model
-        },
-        {
-            "title": "Key Components of IRCoT",
-            "text": "Key components of the IRCoT process include query understanding and decomposition, initial document retrieval, iterative reasoning steps, dynamic query refinement, evidence collection and synthesis, and continuous evaluation and adjustment. The magic happens in the continuous interplay between retrieval and reasoning. Each retrieved piece of information influences the next thought step, while each reasoning step guides subsequent retrieval actions.",
-            "embedding": None
-        },
-        {
-            "title": "IRCoT Implementation Challenges",
-            "text": "Common challenges in IRCoT implementation include technical hurdles such as query expansion complexity, resource intensive processing, latency management, result coherence maintenance, and system scalability. Building an effective IRCoT system requires attention to optimization strategies. Performance can be enhanced through caching frequently accessed information, smart query decomposition, and parallel processing capabilities.",
-            "embedding": None
-        },
-        {
-            "title": "Prompting Techniques for IRCoT",
-            "text": "Effective prompting forms the backbone of successful IRCoT implementation. Chain-of-Thought prompting must be carefully structured to guide both the retrieval and reasoning processes effectively. Core prompting principles include clear step sequencing, logical progression, context maintenance, adaptive refinement, error recovery, and result validation. The 'Let's think step-by-step' approach proves particularly effective when combined with retrieval operations.",
-            "embedding": None
-        },
-        {
-            "title": "IRCoT Performance Benefits",
-            "text": "Using IRCoT with GPT3 substantially improves retrieval (up to 21 points) as well as downstream QA (up to 15 points) on four datasets: HotpotQA, 2WikiMultihopQA, MuSiQue, and IIRC. Similar substantial gains are observed in out-of-distribution (OOD) settings as well as with much smaller models such as Flan-T5-large without additional training. IRCoT reduces model hallucination, resulting in factually more accurate CoT reasoning.",
-            "embedding": None
-        },
-        {
-            "title": "RAG Overview",
-            "text": "Retrieval-augmented generation (RAG) is a powerful combination of traditional LLMs with information retrieval systems. By accessing and incorporating relevant information from external sources, RAG models can produce more accurate and contextually relevant responses. RAG architecture means that you can constrain generative AI to your enterprise content sourced from vectorized documents and images.",
-            "embedding": None
-        },
-        {
-            "title": "Building AI Knowledge Bases",
-            "text": "To build an AI knowledge base, start by defining your goals and scope. Then gather and preprocess data from relevant sources, including existing documents, FAQs, customer interactions, and other information. Preprocess the data by cleaning, organizing, and structuring it for AI analysis. Ensure data quality and accuracy to improve the effectiveness of your AI model. Select the right structure for organizing your content and implement appropriate AI models.",
-            "embedding": None
-        },
-        {
-            "title": "AI Knowledge Base Components",
-            "text": "Key components of an AI knowledge base include machine learning models, natural language processing, and a data repository. Machine learning models enable the AI to learn from data, identify patterns, and make predictions with minimal human intervention. NLP allows AI to understand and interpret human language, which is essential for analyzing and responding to user queries. A centralized storage system keeps all the relevant data.",
-            "embedding": None
-        },
-        {
-            "title": "Amazon Bedrock Knowledge Bases",
-            "text": "Amazon Bedrock Knowledge Bases is a fully managed capability with in-built session context management and source attribution that helps implement the entire RAG workflow from ingestion to retrieval and prompt augmentation. It automatically fetches data from sources such as Amazon S3, Confluence, Salesforce, SharePoint, or Web Crawler. Once the content is ingested, it converts it into blocks of text, the text into embeddings, and stores the embeddings in your vector database.",
-            "embedding": None
-        },
-        {
-            "title": "IRCoT vs Traditional RAG",
-            "text": "Unlike traditional one-step retrieve-and-read approaches, IRCoT operates through an iterative process that alternates between extending CoT (reasoning) and expanding retrieved information. The system uses the question, previously collected paragraphs, and previously generated CoT sentences to generate the next reasoning step, then uses the last CoT sentence as a query to retrieve additional relevant paragraphs.",
-            "embedding": None
-        }
-    ]    # Pre-compute embeddings for the knowledge base
 
-    test_set = [
-        {
-            "question": "How does dynamic query refinement in IRCoT improve retrieval relevance, and what challenge does resource-intensive processing present?",
-            "answer": "Dynamic query refinement in IRCoT uses the continuous interplay between chain-of-thought reasoning and information retrieval to focus each subsequent search on the most relevant concepts, improving retrieval relevance. However, resource-intensive processing can introduce high latency and scalability constraints in a production system.",
-            "evidence": [
-            "Key Components of IRCoT",
-            "IRCoT Implementation Challenges"
-            ]
-        },
-        {
-            "question": "What are the primary steps required to build an AI knowledge base, and which AWS service can automatically handle ingestion and source attribution?",
-            "answer": "To build an AI knowledge base you must define your goals and scope, gather and preprocess data from relevant sources, ensure data quality and structure, and implement appropriate machine learning and NLP models. Amazon Bedrock Knowledge Bases can automatically handle content ingestion, session context management, and source attribution.",
-            "evidence": [
-            "Building AI Knowledge Bases",
-            "Amazon Bedrock Knowledge Bases"
-            ]
-        },
-        {
-            "question": "On which datasets does IRCoT achieve significant QA improvements, and which underlying framework enables its dynamic reasoning–retrieval loop?",
-            "answer": "IRCoT achieves up to 15-point QA improvements on HotpotQA, 2WikiMultihopQA, MuSiQue, and IIRC datasets by leveraging an interleaved retrieval and chain-of-thought framework that creates a dynamic feedback loop between reasoning and retrieval steps.",
-            "evidence": [
-            "IRCoT Performance Benefits",
-            "IRCoT Framework Overview"
-            ]
-        }
-    ]
+    client = MongoClient('mongodb://localhost:27017')
+    db = client['rag_db']
+    collection = db['documents']
+
     
     embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-    for doc in knowledge_base:
-        doc["embedding"] = embedding_model.encode(doc["text"])
-
 
 
     # Initialize the IRCoT system
 
     template = """
     Please generate your chain-of-thought reasoning step by step with provided evidences.  \n
-    Your response should not 
     Once you are provided enough evidence, conclude with a sentence beginning with ‘Answer is:’ to state the final answer. \n
 
     
@@ -240,7 +292,7 @@ if __name__ == "__main__":
     Evidence: \n
     """
 
-    ircot = IRCoTSystem(knowledge_base=knowledge_base, 
+    ircot = IRCoTSystem(collection=collection, 
                         my_llm=my_llm,
                         prompt_template=template
                         )
@@ -249,8 +301,37 @@ if __name__ == "__main__":
     # question = "How does IRCoT improve over traditional RAG approaches and what are its key components?"
     # question = "What is IRCoT in layman's term? Give me answer in simple language and in fewer words."
 
-    question_set = test_set[0]
-    answer, evidence_score = ircot.answer_question(question_set)
-    
-    print(f"Question: {question_set["question"]}\n{answer}")
-    print(evidence_score)
+    def extract_answer_split(text: str) -> str:
+        parts = text.split("Answer is:", 1)
+        ans = parts[1] if len(parts) > 1 else text
+
+        ans = ans.strip()
+
+        m = re.match(r'^(yes|no)\b', ans, flags=re.IGNORECASE)
+        if m:
+            return m.group(1).lower()
+
+        ans = ans.strip(string.punctuation + string.whitespace)
+        return ans
+
+    test_set = ircot.load_test_set(test_path='VDT2025_Multihop RAG dataset/MultiHopRAG.json')
+    f1_score, accuracy, num_iter, match = 0, 0, 0, 0
+
+    test_range = 20
+    for question_set in test_set[:test_range]:
+        answer, evidence_score = ircot.answer_question(question_set)
+        answer = extract_answer_split(answer)
+
+        f1_score += evidence_score[0]
+        accuracy += evidence_score[1]
+        num_iter += evidence_score[2]
+
+        if answer.lower() == question_set['answer'].lower():
+            match += 1
+        print(f"Question: {question_set["question"]}\n Answer: {answer}")
+        print(f"Ground truth: {question_set['answer']}")
+
+    print("F1 Score: ", f1_score/test_range)
+    print("Accuracy: ", accuracy/test_range)
+    print("Number of Iteration: ", num_iter/test_range)
+    print("Match: ", match/test_range)
