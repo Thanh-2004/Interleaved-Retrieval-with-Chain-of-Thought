@@ -92,7 +92,7 @@ def cal_f1_score(answer: List[str], target: List[str]) -> float:
 
     if precision + recall == 0:
         return 0.0
-    return 2 * (precision * recall) / (precision + recall)
+    return precision, recall, 2 * (precision * recall) / (precision + recall)
 
 
 def cal_accuracy_score(answer: List[str], target: List[str]) -> float:

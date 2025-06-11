@@ -40,7 +40,7 @@ class IRCoTSystem:
         
     #     return [self.knowledge_base[i] for i in top_indices]
 
-    def retrieve_initial(self, question:str, k: int = 10) -> List[Dict]:
+    def retrieve_initial(self, question:str, k: int = 5) -> List[Dict]:
         q_vec = self.embedding_model.encode([question])[0]
         q_norm = np.linalg.norm(q_vec)
         
@@ -173,13 +173,15 @@ class IRCoTSystem:
         # print(f"Target: {target}")
         # print("========================================")
         if len(target) == 0:
+            precision = 1
+            recall = 1
             f1_score = 1
             accuracy = 1
         else:
-            f1_score = cal_f1_score(output, target)
+            precision, recall, f1_score = cal_f1_score(output, target)
             accuracy = cal_accuracy_score(output, target)
         # return f"F1 Score: {f1_score} \n Accuracy: {accuracy} \n Number of Iteration: {num_iter}"
-        return (f1_score, accuracy, num_iter)
+        return (precision, recall, f1_score, accuracy, num_iter)
 
     def answer_question(self, question_set: dict, max_iterations: int = 10) -> str:
         # Initial retrieval
@@ -260,7 +262,7 @@ if __name__ == "__main__":
     # model_name="llama-3.3-70b-versatile"
     # model_name="gpt-4o-mini"
     # model_name="gpt-3.5-turbo"
-    model_name="deepseek/deepseek-chat-v3-0324:free"
+    model_name="deepseek/deepseek-r1-0528:free"
     my_llm = OpenRouterLLM(model_name)
 
     client = MongoClient('mongodb://localhost:27017')
@@ -315,23 +317,29 @@ if __name__ == "__main__":
         return ans
 
     test_set = ircot.load_test_set(test_path='VDT2025_Multihop RAG dataset/MultiHopRAG.json')
-    f1_score, accuracy, num_iter, match = 0, 0, 0, 0
+    precision, recall, f1_score, accuracy, num_iter, match = 0, 0, 0, 0, 0, 0
 
     test_range = 20
-    for question_set in test_set[:test_range]:
+    offset = 0
+    for i, question_set in enumerate(test_set[offset : test_range]):
+        print(f"Instance {i}: ")
         answer, evidence_score = ircot.answer_question(question_set)
         answer = extract_answer_split(answer)
 
-        f1_score += evidence_score[0]
-        accuracy += evidence_score[1]
-        num_iter += evidence_score[2]
+        precision += evidence_score[0]
+        recall += evidence_score[1]
+        f1_score += evidence_score[2]
+        accuracy += evidence_score[3]
+        num_iter += evidence_score[4]
 
         if answer.lower() == question_set['answer'].lower():
             match += 1
         print(f"Question: {question_set["question"]}\n Answer: {answer}")
         print(f"Ground truth: {question_set['answer']}")
 
-    print("F1 Score: ", f1_score/test_range)
-    print("Accuracy: ", accuracy/test_range)
-    print("Number of Iteration: ", num_iter/test_range)
-    print("Match: ", match/test_range)
+        print("Precision: ", precision/test_range)
+        print("Recall: ", recall/test_range)
+        print("F1 Score: ", f1_score/test_range)
+        print("Accuracy: ", accuracy/test_range)
+        print("Number of Iteration: ", num_iter/test_range)
+        print("Match: ", match/test_range)
